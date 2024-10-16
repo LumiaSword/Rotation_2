@@ -1,0 +1,105 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+
+```{r}
+library(ribor)
+library(tidyverse)
+```
+
+
+```{r}
+#file path to the example ribo file 
+file.path <- system.file("extdata", "HEK293_ingolia.ribo", package = "ribor")
+
+#generates the 'ribo' class object 
+original.ribo <- Ribo(file.path, rename = rename_default ) # object is .ribo file itself
+```
+
+
+```{r}
+original.ribo
+```
+
+
+```{r}
+plot_length_distribution(x           = original.ribo,
+                         region      = "CDS", # 'UTR5', 'UTR5J, 'CDS', 'UTR3J', 'UTR3'
+                         range.lower = 28,
+                         range.upper = 32,
+                         fraction    = F)
+```
+
+
+```{r}
+rc <- get_length_distribution(ribo.object      = original.ribo,
+                                   region      = "CDS",
+                                   range.lower = 28,
+                                   range.upper = 32)
+
+plot_length_distribution(rc, fraction = TRUE)
+```
+
+
+# Metagene Analysis
+
+```{r}
+get_info(original.ribo)$attributes
+```
+
+
+```{r}
+tidy.meta.start <- get_tidy_metagene(ribo.object = original.ribo, 
+                           site        = "start",
+                           range.lower = 28,
+                           range.upper = 32,
+                           length = T)
+```
+
+```{r}
+tidy.meta.start
+```
+
+```{r}
+plot_metagene(tidy.meta.start,normalize = T)
+```
+
+# region counts
+
+```{r}
+# introduce a new region, set start and stop region as center, 
+plot_region_counts(x           = original.ribo,
+                   range.lower = 28,
+                   range.upper = 32)
+```
+
+
+```{r}
+rc.info <- get_region_counts(ribo.object = original.ribo,
+                             region      = c("UTR5","CDS", "UTR3"),
+                             range.lower = 28,
+                             range.upper = 32)
+plot_region_counts(rc.info)
+```
+
+
+
+```{r}
+rc.alias = get_region_counts(original.ribo,
+                        range.lower = 28,
+                        range.upper = 32,
+                        length      = TRUE,
+                        transcript  = FALSE,
+                        alias       = TRUE)
+rc.alias = as.data.frame(rc.alias) 
+rc.alias %>%
+  filter(transcript == "OR4F5-201")
+```
+
+```{r}
+head(get_reference_names(original.ribo), 5)
+```
+
