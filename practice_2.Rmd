@@ -4,8 +4,50 @@ output: html_notebook
 ---
 
 
+# Notes
+
+The second rotation is centered around the downstream data analysis of ribo-seq. Ribosomal analysis was performed by sequencing the Ribosome Protected Footprints (RPFs), which reflects the status of the ribosome through the mRNA fragments undergoing translation, thus obtaining a distribution of reads of a specific length at the transcript level. Data were analyzed using the RiboR software package.
+
+## Updates
+1. Review ribosome-profiling. Learn how to use RiboR. Go through tutorial.
+
+2. Use real .ribo data. Filter for the top 100 transcripts with the highest read counts. Check their coverage in each CDS regions. Visualize the distribution.
+
+3. Adjust the way bins are divided.
+
+    before: Position/transcript cds region length to get a relative length. Relative length * 100 and downward rounding to get position assigned to each bin. 
+    
+    after: A determined number of bins are set. Transcripts with different region lengths have different position ranges in the each bin.
+4. For each bins, the distribution of all transcripts is represented by adding up ~~raw counts~~ their respective densities;
+
+    The distribution map is extended to the full transcript range.
+
+    Decide how to set different numbers of bins for different regions.
+
+    Rearrange the order of heatmaprows. Cluster between transcripts.
+
+    Observe outliers transcripts. Try to explain.
+
+5. Backed up using git; add comments; for WDR74 and MTRNR2L, documented and excluded from subsequent analyses
+
+    The correctness of the method was verified using a test set.
+
+    Try to demonstrate the read distribution for higher precision regions.
+
+    If the method is correct, try to explain the high enrichment of readings in the UTR region.
+
+    After confirming the flow of the method, apply it to all 6 experiments.
+
+    Observe if there is a consistent trend in the expression of transcripts across the six experiments?
+
+    How can we programmatically identify differences in trends?
+    
+    For NPMI-201 and PPIA-204, why they are partially not expressed in the CDS region?
+
+# Packages
+
 ```{r}
-library(ribor)
+library(ribor) # To process the 
 library(tidyverse)
 library(ggplot2)
 library(viridis)
@@ -13,15 +55,18 @@ library(pheatmap)
 library(grid)
 ```
 
+# Data sources
 
+Open source data from [NCBI](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE158374). .ribo file are generated using [riboflow](https://github.com/ribosomeprofiling/riboflow).
 
 ```{r}
 h1299.ribo = Ribo("GSE158374_H1299.ribo.hdf5", rename = rename_default )
 hek293.ribo = Ribo("GSE158374_manuscript.HEK293.ribo.hdf5",rename = rename_default )
 ```
 
-
 # H1299
+
+\
 ```{r}
 h1299.ribo
 
@@ -98,16 +143,6 @@ rc_top100 = get_region_counts(h1299.ribo,
 
 rc_top100
 ```
-
-
-```{r}
-# b = as.data.frame(h1299.rc) %>%
-#   arrange(desc(count))%>%
-#   head(310) %>%
-#   distinct(transcript) %>%
-#   pull()
-```
-
 
 
 ```{r}
