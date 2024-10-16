@@ -1,0 +1,519 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+```{r}
+library(ribor)
+library(tidyverse)
+library(ggplot2)
+library(viridis)
+library(pheatmap)
+library(grid)
+```
+
+
+
+```{r}
+h1299.ribo = Ribo("GSE158374_H1299.ribo.hdf5", rename = rename_default )
+hek293.ribo = Ribo("GSE158374_manuscript.HEK293.ribo.hdf5",rename = rename_default )
+```
+
+
+# H1299
+```{r}
+h1299.ribo
+
+# coverage T, rna T
+```
+
+
+```{r}
+h1299.start = get_metagene(ribo.object = h1299.ribo, 
+                           site        = "start",
+                           range.lower = 28,
+                           range.upper = 32,
+                           length      = FALSE,
+                           transcript  = FALSE,
+                           alias       = TRUE)
+
+h1299.start[1:5,c(1,2,3,53,54,55)]
+```
+
+```{r}
+head(get_reference_names(h1299.ribo), 2)
+```
+
+
+```{r}
+plot_region_counts(x           = h1299.ribo,
+                   range.lower = 28,
+                   range.upper = 32)
+```
+
+
+
+```{r}
+h1299.rc = get_region_counts(h1299.ribo,
+                        range.lower = 28,
+                        range.upper = 32,
+                        length      = T,
+                        transcript  = F,
+                        alias = T,
+                        compact = F)
+```
+
+
+```{r}
+top100_h1299_cds = h1299.rc %>%
+  filter(region == "CDS") %>%
+  group_by(transcript) %>%
+  summarise(total_count = sum(count)) %>%
+  arrange(desc(total_count))%>%
+  head(100) %>%
+  pull(transcript)
+```
+
+
+```{r}
+top100_h1299 = h1299.rc %>%
+  group_by(transcript) %>%
+  summarise(total_count = sum(count)) %>%
+  arrange(desc(total_count)) %>%
+  head(100) %>%
+  pull(transcript)
+```
+
+```{r}
+rc_top100 = get_region_counts(h1299.ribo,
+                        range.lower = 28,
+                        range.upper = 32,
+                        length      = T,
+                        transcript  = F,
+                        alias = T,
+                        compact = F,
+                  tidy = F) %>%
+  filter(transcript %in% top100_h1299)
+
+rc_top100
+```
+
+
+```{r}
+# b = as.data.frame(h1299.rc) %>%
+#   arrange(desc(count))%>%
+#   head(310) %>%
+#   distinct(transcript) %>%
+#   pull()
+```
+
+
+
+```{r}
+region_coord = get_original_region_coordinates(ribo.object = h1299.ribo , alias = TRUE)
+
+top100_region_coord = region_coord %>%
+    filter(transcript %in% top100_h1299) 
+
+top100_cds_region_coord = region_coord %>%
+    filter(transcript %in% top100_h1299_cds) 
+```
+
+
+```{r}
+top100_region_coord %>%
+  group_by(transcript) %>%
+  summarise(UTR5 = UTR5_stop - UTR5_start,CDS = CDS_stop - CDS_start, UTR3 = UTR3_stop - UTR3_start) %>%
+  ungroup() 
+```
+
+
+
+```{r}
+experiment.info = get_info(ribo.object = h1299.ribo)[['experiment.info']]
+has.coverage = experiment.info[experiment.info$coverage == TRUE, "experiment"]
+exp.names <- has.coverage[1] # 1-A
+```
+
+```{r}
+top100_region_coord %>%
+    filter(transcript == top100_h1299[i]) %>%
+    pull(CDS_start)
+```
+
+
+
+
+```{r}
+cov_list = list()
+
+n_bins_utr5 = 30
+n_bins_cds = 100
+n_bins_utr3 = 30
+
+# experiment: 20210318-NSP1-H1299-A
+for (i in 1:length(top100_h1299)) {
+  # cds region bond
+  cds_start = top100_region_coord %>%
+    filter(transcript == top100_h1299[i]) %>%
+    pull(CDS_start)
+  
+  cds_end = top100_region_coord %>%
+    filter(transcript == top100_h1299[i]) %>%
+    pull(CDS_stop)
+  
+  # utr5 region bond
+  utr5_start = 1
+  utr5_end = cds_start - 1
+  
+  # utr3 region bond
+  utr3_start = cds_end + 1
+  utr3_end = top100_region_coord %>%
+    filter(transcript == top100_h1299[i]) %>%
+    pull(UTR3_stop)
+  
+  utr5_length = utr5_end - utr5_start + 1
+  cds_length = cds_end - cds_start + 1
+  utr3_length = utr3_end - utr3_start + 1
+  
+  bin_size_utr5 = utr5_length / n_bins_utr5
+  bin_size_cds = cds_length / n_bins_cds
+  bin_size_utr3 = utr3_length / n_bins_utr3
+  
+  cov_df = get_coverage(ribo.object = h1299.ribo,
+                    name        = top100_h1299[i],
+                    range.lower = 28,
+                    range.upper = 32,
+                    length      = T,
+                    alias       = TRUE,
+                    tidy        = TRUE,
+                    compact     = F,
+                    experiment  = exp.names)
+  
+  cov_df = cov_df %>%
+    mutate(position = as.numeric(position)) %>%
+    mutate(region = case_when(
+      position >= utr5_start & position <= utr5_end ~ "UTR5",
+      position >= cds_start & position <= cds_end ~ "CDS",
+      position >= utr3_start & position <= utr3_end ~ "UTR3",
+      TRUE ~ NA_character_
+    )) %>%
+    filter(!is.na(region)) %>%
+    mutate(relative_position = case_when(
+      region == "UTR5" ~ (position - utr5_start + 1),
+      region == "CDS" ~ (position - cds_start + 1),
+      region == "UTR3" ~ (position - utr3_start + 1)
+    )) %>%
+    mutate(bin = case_when(
+      region == "UTR5" ~ ceiling(relative_position / bin_size_utr5),
+      region == "CDS" ~ ceiling(relative_position / bin_size_cds),
+      region == "UTR3" ~ ceiling(relative_position / bin_size_utr3)
+    ))
+  
+  cov_df$bin[cov_df$region == "UTR5" & cov_df$bin > n_bins_utr5] = n_bins_utr5
+  cov_df$bin[cov_df$region == "CDS" & cov_df$bin > n_bins_cds] = n_bins_cds
+  cov_df$bin[cov_df$region == "UTR3" & cov_df$bin > n_bins_utr3] = n_bins_utr3
+  
+  all_cov = cov_df %>%
+    group_by(region, bin) %>%
+    summarise(total_count = sum(count),.groups = "drop") %>%
+    mutate(transcript = top100_h1299[i]) 
+    
+  
+  cov_list[[top100_h1299[i]]] = all_cov
+  
+}
+
+
+coverage_all = bind_rows(cov_list)
+```
+
+
+
+
+```{r}
+top100_h1299[i]
+utr5_start
+utr5_end
+utr5_length
+
+cds_start
+cds_end
+cds_length
+
+utr3_start
+utr3_end
+utr3_length
+```
+
+```{r}
+coverage_all 
+```
+
+
+```{r}
+coverage_all = coverage_all %>%
+  mutate(region = factor(region, levels = c("UTR5", "CDS", "UTR3")))
+```
+
+
+```{r}
+coverage_all %>%
+  group_by(transcript,region) %>%
+  mutate(density = total_count / sum(total_count))  %>% # density will turn NA if total_count in certain region to be 0
+  ungroup() %>%
+  group_by(region,bin) %>%
+  summarise(count = sum(density,na.rm = T),.groups = "drop") %>%
+  ggplot(aes(x = bin, y = count)) +
+  geom_line() +
+  labs(
+    x = "Bin",
+    y = "Sum Read Count Density"
+  ) +
+  facet_wrap(~ region, scales = "free_x")
+
+coverage_all %>%
+  group_by(region,bin) %>%
+  summarise(count = sum(total_count),.groups = "drop") %>%
+  ggplot(aes(x = bin, y = count)) +
+  geom_line() +
+  labs(
+    x = "Bin",
+    y = "Sum Read Count"
+  ) +
+  facet_wrap(~ region, scales = "free_x")
+```
+
+> Would it be a good idea to use density to represent the reads number in each bin of each transcript in a heatmap?
+
+
+```{r}
+coverage_heatmap = coverage_all %>%
+  mutate(transcript = factor(transcript, levels = rev(top100_h1299)))
+
+coverage_heatmap %>%
+  ggplot(aes(x = bin, y = transcript, fill = log10(total_count+1)))+
+  geom_tile() +
+  labs(
+    x = "Bin",
+    y = "Transcript",
+    fill = "Read Count")+
+  scale_fill_viridis_c()  + 
+  facet_grid(~ region, scales = "free_x", space = "free")
+```
+
+
+
+```{r}
+coverage_wide = coverage_all %>%
+  group_by(transcript) %>%
+  arrange(region)  %>%
+  mutate(transcript = factor(transcript, levels = top100_h1299)) %>%
+  arrange(transcript) %>%
+  pivot_wider(names_from = c(region, bin), values_from = total_count)
+
+dist_matrix = dist(coverage_wide[,-1])
+hc = hclust(dist_matrix, method = "ward.D2")
+order = coverage_wide$transcript[hc$order]
+```
+
+```{r}
+coverage_matrix_data = as.matrix(coverage_wide[,-1])  # rm transcript col
+rownames(coverage_matrix_data) = coverage_wide$transcript  
+
+annotation_col = data.frame(
+  Region = ifelse(grepl("UTR5", colnames(coverage_matrix_data)), "UTR5",
+                  ifelse(grepl("CDS", colnames(coverage_matrix_data)), "CDS", "UTR3"))
+)
+rownames(annotation_col) <- colnames(coverage_matrix_data)
+```
+
+
+```{r}
+pheatmap(
+  log10(coverage_matrix_data + 1),
+  cluster_rows = TRUE,  # cluster based on rows
+  cluster_cols = F,  
+  show_rownames = TRUE,  # show the transcripts' name
+  show_colnames = F,  
+  color = viridis(50),  
+  annotation_col = annotation_col,
+  main = "Transcripts Read Count Heatmap"
+)
+
+```
+
+
+
+
+
+```{r}
+# normalized
+# coverage_all_normalized = coverage_all %>%
+#   group_by(transcript) %>%
+#   mutate(normalized_count = count / mean(count))
+# 
+# coverage_summary_normalized = coverage_all_normalized %>%
+#   mutate(bin = floor(relative_position * 100)) %>%
+#   group_by(bin) %>%
+#   summarise(mean_normalized_count = mean(normalized_count))
+# 
+# ggplot(coverage_summary_normalized, aes(x = bin, y = mean_normalized_count)) +
+#   geom_line() +
+#   labs(
+#     title = "Normalized Average Coverage Across 100 Transcripts",
+#     x = "Relative Position in CDS (%)",
+#     y = "Normalized Average Read Count"
+#   ) +
+#   theme_minimal()
+
+```
+
+```{r}
+# coverage_heatmap_norm = coverage_all_normalized %>%
+#   mutate(bin = floor(relative_position * 100))
+# 
+# 
+# ggplot(coverage_heatmap_norm, aes(x = bin, y = transcript, fill = normalized_count)) +
+#   geom_tile() +
+#   labs(
+#     x = "Relative Position in CDS (%)",
+#     y = "Transcript",
+#     fill = "Norm Read Count"
+#   ) 
+```
+
+```{r}
+# cds_cov_1 = cov_1 %>%
+#   filter(position %in% c(217:2367)) %>%
+#   mutate(position = as.numeric(position)) %>%
+#   mutate(
+#       relative_position = (position - 217 + 1) / (2367 - 217 + 1)
+#     )
+# cds_cov_1$transcript = top100_h1299[2]
+# 
+# cov_list = list()
+# cov_list[[top100_h1299[2]]] = cds_cov_1
+# 
+# coverage_all <- bind_rows(cov_list)
+```
+
+```{r}
+# cov_1 = get_coverage(ribo.object = h1299.ribo,
+#                     name        = as.vector(top100_h1299[2]),
+#                     range.lower = 28,
+#                     range.upper = 32,
+#                     length      = T,
+#                     alias       = TRUE,
+#                     tidy        = TRUE,
+#                     compact = F,
+#                     experiment  = exp.names)
+```
+
+```{r}
+coverage_all %>%
+  group_by(transcript) %>%
+  mutate(normalized_count = count / mean(count)) %>%
+  arrange(desc(normalized_count))
+```
+
+
+
+# HEK293
+```{r}
+hek293.rc = get_region_counts(hek293.ribo,
+                        range.lower = 28,
+                        range.upper = 32,
+                        length      = T,
+                        transcript  = F,
+                        alias = T,
+                        compact = F)
+
+
+```
+
+```{r}
+top100_hek293_cds = hek293.rc %>%
+  filter(region == "CDS") %>%
+  group_by(transcript) %>%
+  summarise(total_count = sum(count)) %>%
+  arrange(desc(total_count))%>%
+  head(100) %>%
+  pull(transcript)
+
+top100_hek293 = hek293.rc %>%
+  group_by(transcript) %>%
+  summarise(total_count = sum(count)) %>%
+  arrange(desc(total_count)) %>%
+  head(100) %>%
+  pull(transcript)
+```
+
+```{r}
+region_coord_hek293 = get_internal_region_coordinates(ribo.object = hek293.ribo , alias = TRUE)
+
+top100_region_coord_hek293 = region_coord %>%
+    filter(transcript %in% top100_hek293) %>%
+    select(transcript,CDS_start,CDS_stop)
+
+top100_cds_region_coord_hek293 = region_coord %>%
+    filter(transcript %in% top100_hek293_cds) %>%
+    select(transcript,CDS_start,CDS_stop)
+
+experiment.info.hek293 = get_info(ribo.object = hek293.ribo)[['experiment.info']]
+has.coverage.hek293 = experiment.info[experiment.info.hek293$coverage == TRUE, "experiment"]
+exp.names.hek293 <- has.coverage[1] # 1-A
+```
+
+```{r}
+cov_list_hek293 = list()
+
+n_bins = 100
+# experiment: 20210318-NSP1-H1299-A
+for (i in 1:length(top100_hek293_cds)) {
+  # cds region bond
+  cds_start = top100_cds_region_coord_hek293 %>%
+    filter(transcript == top100_hek293_cds[i]) %>%
+    pull(CDS_start)
+  
+  cds_end = top100_cds_region_coord_hek293 %>%
+    filter(transcript == top100_hek293_cds[i]) %>%
+    pull(CDS_stop)
+  
+  cds_length = cds_end - cds_start + 1
+  
+  bin_size = cds_length / n_bins
+  
+  cov_df_hek293 = get_coverage(ribo.object = hek293.ribo,
+                    name        = top100_hek293_cds[i],
+                    range.lower = 28,
+                    range.upper = 32,
+                    length      = T,
+                    alias       = TRUE,
+                    tidy        = TRUE,
+                    compact     = F,
+                    experiment  = exp.names.hek293)
+  
+  cov_df_hek293 = cov_df_hek293 %>%
+    filter(position %in% c(cds_start:cds_end)) %>%
+    mutate(position = as.numeric(position)) %>%
+    mutate(relative_position = (position - cds_start + 1),
+           bin = ceiling(relative_position / bin_size))
+  
+  cov_df_hek293$bin[cov_df$bin > n_bins] = n_bins
+  
+  cds_cov_hek293 = cov_df_hek293 %>%
+    group_by(bin) %>%
+    summarise(total_count = sum(count)) %>%
+    mutate(transcript = top100_hek293_cds[i])
+  
+  cov_list_hek293[[top100_hek293_cds[i]]] = cds_cov_hek293
+  
+}
+
+
+coverage_all_hek293 = bind_rows(cov_list_hek293)
+```
+
+
