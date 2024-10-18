@@ -47,7 +47,7 @@ The second rotation is centered around the downstream data analysis of ribo-seq.
 # Packages
 
 ```{r}
-library(ribor) # To process the 
+library(ribor)
 library(tidyverse)
 library(ggplot2)
 library(viridis)
@@ -66,27 +66,25 @@ hek293.ribo = Ribo("GSE158374_manuscript.HEK293.ribo.hdf5",rename = rename_defau
 
 # H1299
 
-\
+## Basic info of the .ribo file
 ```{r}
 h1299.ribo
 
-# coverage T, rna T
+# coverage TRUE, rna TRUE, metadata FALSE
 ```
 
 
-```{r}
+```{r,eval = FALSE}
 h1299.start = get_metagene(ribo.object = h1299.ribo, 
                            site        = "start",
                            range.lower = 28,
                            range.upper = 32,
                            length      = FALSE,
                            transcript  = FALSE,
-                           alias       = TRUE)
+                           alias       = TRUE) # Coverage check.
 
 h1299.start[1:5,c(1,2,3,53,54,55)]
-```
 
-```{r}
 head(get_reference_names(h1299.ribo), 2)
 ```
 
@@ -94,30 +92,30 @@ head(get_reference_names(h1299.ribo), 2)
 ```{r}
 plot_region_counts(x           = h1299.ribo,
                    range.lower = 28,
-                   range.upper = 32)
+                   range.upper = 32) # Read Counts for different experiments
 ```
 
 
 
 ```{r}
 h1299.rc = get_region_counts(h1299.ribo,
-                        range.lower = 28,
+                        range.lower = 28, # usually the RPFs has a 28-30nt in length. Use 28-32 for here
                         range.upper = 32,
-                        length      = T,
-                        transcript  = F,
-                        alias = T,
-                        compact = F)
+                        length      = T, # don't separate based on different length
+                        transcript  = F, # transcriptome level result
+                        alias = T,  # Name of the transcript
+                        compact = F) # data.fraame rather than DataFrame
 ```
 
 
-```{r}
+```{r, eval=FALSE}
 top100_h1299_cds = h1299.rc %>%
   filter(region == "CDS") %>%
   group_by(transcript) %>%
   summarise(total_count = sum(count)) %>%
   arrange(desc(total_count))%>%
   head(100) %>%
-  pull(transcript)
+  pull(transcript) # This will return the top 100 transcripts with the most reads in CDS region
 ```
 
 
@@ -127,65 +125,208 @@ top100_h1299 = h1299.rc %>%
   summarise(total_count = sum(count)) %>%
   arrange(desc(total_count)) %>%
   head(100) %>%
-  pull(transcript)
+  pull(transcript) # This will return the top 100 transcripts wih the most reads amoung all region, including UTR5, CDS and UTR3
 ```
 
 ```{r}
-rc_top100 = get_region_counts(h1299.ribo,
+# Check the distribution of those 28-32nt reads in the top 100 broadly
+rc_top100 = get_region_counts(h1299.ribo, # return the reads count for UTR, UTRJ, and CDS
                         range.lower = 28,
                         range.upper = 32,
                         length      = T,
                         transcript  = F,
                         alias = T,
                         compact = F,
-                  tidy = F) %>%
+                        tidy = F) %>%
   filter(transcript %in% top100_h1299)
 
-rc_top100
+rc_top100 # for all 6 experiments
 ```
 
 
 ```{r}
-region_coord = get_original_region_coordinates(ribo.object = h1299.ribo , alias = TRUE)
+region_coord = get_original_region_coordinates(ribo.object = h1299.ribo , alias = TRUE) # Find the region coordinates for h1299.
 
-top100_region_coord = region_coord %>%
+top100_region_coord = region_coord %>% # filter for the top 100 transcripts
     filter(transcript %in% top100_h1299) 
 
-top100_cds_region_coord = region_coord %>%
-    filter(transcript %in% top100_h1299_cds) 
+# top100_cds_region_coord = region_coord %>%
+#     filter(transcript %in% top100_h1299_cds) 
+
+top100_region_coord
 ```
 
 
 ```{r}
-top100_region_coord %>%
+top100_region_coord %>% # manually calculate the original region bonds
   group_by(transcript) %>%
-  summarise(UTR5 = UTR5_stop - UTR5_start,CDS = CDS_stop - CDS_start, UTR3 = UTR3_stop - UTR3_start) %>%
-  ungroup() 
+  summarise(UTR5 = UTR5_stop - UTR5_start+1,CDS = CDS_stop - CDS_start+1, UTR3 = UTR3_stop - UTR3_start+1) %>%
+  ungroup()
 ```
 
 
+```{r}
+get_original_region_lengths(ribo.object = h1299.ribo, # check with integreted algorithm
+                            alias = T) %>%
+  separate(transcript, into = paste0("part", 1:5), sep = "\\|", fill = "right") %>%
+  filter(part5 %in% top100_h1299) %>%
+  select(part5,UTR5,CDS,UTR3) %>%
+  arrange(part5)
+```
+
+# A function for top100 distribution in all 6 experiments
 
 ```{r}
 experiment.info = get_info(ribo.object = h1299.ribo)[['experiment.info']]
 has.coverage = experiment.info[experiment.info$coverage == TRUE, "experiment"]
-exp.names <- has.coverage[1] # 1-A
-```
-
-```{r}
-top100_region_coord %>%
-    filter(transcript == top100_h1299[i]) %>%
-    pull(CDS_start)
 ```
 
 
+To write a function, the intake will be:
+
+    0. An empty list
+
+    1. A list of transcripts name (top 100).
+
+    2. A coordinate df showing transcripts name, CDS start, CDS end, and UTR3 end.
+
+    3. Bin size for each region.
+
+    4. Set of experiments.
+
+The info above, together with the ribo file, can generate coverage df: 
+
+    Coverage df: experiment name, position (from 1 to UTR3 end), count (for reads at each position).
+
 
 
 ```{r}
+# Function to calculate distribution
+cov_cal = function(ribo_name,
+                   transcripts_names,
+                   transcripts_coordinates_df,
+                   exp.names,
+                   n_bins_utr5,
+                   n_bins_cds,
+                   n_bins_utr3){
+  
+  cov_list_exp = list()
+  
+  for (i in 1:length(exp.names)){
+    cov_list = list()
+    
+    for (j in 1:length(transcripts_names)){
+      # cds region bond
+      cds_start = transcripts_coordinates_df %>%
+        filter(transcript == transcripts_names[j]) %>%
+        pull(CDS_start)
+      
+      cds_end = transcripts_coordinates_df %>%
+        filter(transcript == transcripts_names[j]) %>%
+        pull(CDS_stop)
+      
+      # utr5 region bond
+      utr5_start = 1
+      utr5_end = cds_start - 1
+  
+      # utr3 region bond
+      utr3_start = cds_end + 1
+      utr3_end = transcripts_coordinates_df %>%
+        filter(transcript == transcripts_names[j]) %>%
+        pull(UTR3_stop)
+  
+      # region length
+      utr5_length = utr5_end - utr5_start + 1
+      cds_length = cds_end - cds_start + 1
+      utr3_length = utr3_end - utr3_start + 1
+      
+      # bin_size for each transcript
+      bin_size_utr5 = utr5_length / n_bins_utr5
+      bin_size_cds = cds_length / n_bins_cds
+      bin_size_utr3 = utr3_length / n_bins_utr3
+      
+      # generate the coverage df
+      cov_df = get_coverage(ribo.object = ribo_name,
+                            name        = transcripts_names[j],
+                            range.lower = 28,
+                            range.upper = 32,
+                            length      = T,
+                            alias       = TRUE,
+                            tidy        = TRUE,
+                            compact     = F,
+                            experiment  = exp.names[i])
+      
+      # reconstruct the coverage df
+      cov_df = cov_df %>%
+        mutate(position = as.numeric(position)) %>% # as.numeric the position
+        mutate(region = case_when(
+          position >= utr5_start & position <= utr5_end ~ "UTR5", 
+          position >= cds_start & position <= cds_end ~ "CDS",
+          position >= utr3_start & position <= utr3_end ~ "UTR3", # assign region for each position
+          TRUE ~ NA_character_
+          )) %>%
+        filter(!is.na(region)) %>%
+        mutate(relative_position = case_when(
+          region == "UTR5" ~ (position - utr5_start + 1),
+          region == "CDS" ~ (position - cds_start + 1),
+          region == "UTR3" ~ (position - utr3_start + 1) # calculate the relative position for each region
+          )) %>%
+        mutate(bin = case_when(
+          region == "UTR5" ~ ceiling(relative_position / bin_size_utr5),
+          region == "CDS" ~ ceiling(relative_position / bin_size_cds),
+          region == "UTR3" ~ ceiling(relative_position / bin_size_utr3) # assign the bin for each position in each region
+          ))
+      
+      # adjust the bin if there are position assigned to bins out of the range
+      cov_df$bin[cov_df$region == "UTR5" & cov_df$bin > n_bins_utr5] = n_bins_utr5
+      cov_df$bin[cov_df$region == "CDS" & cov_df$bin > n_bins_cds] = n_bins_cds
+      cov_df$bin[cov_df$region == "UTR3" & cov_df$bin > n_bins_utr3] = n_bins_utr3
+      
+      # now the cov_df should have there col: experiment, position, reads, region, relative_position, bin
+      # only keep the region and bin, and add transcript for the df
+      all_cov = cov_df %>%
+        group_by(region, bin) %>%
+        summarise(total_count = sum(count),.groups = "drop") %>%
+        mutate(transcript = transcripts_names[j]) 
+      
+      
+      # fill the df into the list
+      cov_list[[transcripts_names[j]]] = all_cov
+    }
+    
+    # get the df for a certain experiment of all selected transcripts
+    coverage_all = bind_rows(cov_list)
+    
+    coverage_all = coverage_all %>%
+      mutate(region = factor(region, levels = c("UTR5", "CDS", "UTR3"))) # the following analysis can thus have the order 
+    
+    # save the coverage data for the current experiment
+    cov_list_exp[[exp.names[i]]] = coverage_all
+  }
+  
+  # return the final list containing coverage data for all experiments
+  return(cov_list_exp)
+}
+```
+
+
+```{r}
+h1299_cov = cov_cal(ribo_name = h1299.ribo,
+            transcripts_names = top100_h1299,
+            transcripts_coordinates_df = top100_region_coord,
+            exp.names = has.coverage,
+            n_bins_utr5 = 30,
+            n_bins_cds = 100,
+            n_bins_utr3 = 30)
+```
+
+## To manually check whether the function works
+```{r,eval=FALSE}
 cov_list = list()
 
 n_bins_utr5 = 30
 n_bins_cds = 100
-n_bins_utr3 = 30
+n_bins_utr3 = 30 # different bins number set for different region
 
 # experiment: 20210318-NSP1-H1299-A
 for (i in 1:length(top100_h1299)) {
@@ -224,7 +365,7 @@ for (i in 1:length(top100_h1299)) {
                     alias       = TRUE,
                     tidy        = TRUE,
                     compact     = F,
-                    experiment  = exp.names)
+                    experiment  = has.coverage[6])
   
   cov_df = cov_df %>%
     mutate(position = as.numeric(position)) %>%
@@ -262,39 +403,24 @@ for (i in 1:length(top100_h1299)) {
 
 
 coverage_all = bind_rows(cov_list)
-```
 
-
-
-
-```{r}
-top100_h1299[i]
-utr5_start
-utr5_end
-utr5_length
-
-cds_start
-cds_end
-cds_length
-
-utr3_start
-utr3_end
-utr3_length
-```
-
-```{r}
-coverage_all 
-```
-
-
-```{r}
 coverage_all = coverage_all %>%
   mutate(region = factor(region, levels = c("UTR5", "CDS", "UTR3")))
 ```
 
 
+```{r,eval=FALSE}
+all(coverage_all == h1299_cov[[6]])
+```
+
+# Visualize
+
+## Distribution, by density
 ```{r}
-coverage_all %>%
+# The first experiment, as an example, 20210318-NSP1-H1299-A
+h1299_cov_exp1 = h1299_cov[[1]]
+
+h1299_cov[[1]] %>%
   group_by(transcript,region) %>%
   mutate(density = total_count / sum(total_count))  %>% # density will turn NA if total_count in certain region to be 0
   ungroup() %>%
@@ -308,26 +434,25 @@ coverage_all %>%
   ) +
   facet_wrap(~ region, scales = "free_x")
 
-coverage_all %>%
-  group_by(region,bin) %>%
-  summarise(count = sum(total_count),.groups = "drop") %>%
-  ggplot(aes(x = bin, y = count)) +
-  geom_line() +
-  labs(
-    x = "Bin",
-    y = "Sum Read Count"
-  ) +
-  facet_wrap(~ region, scales = "free_x")
+# coverage_all %>%
+#   group_by(region,bin) %>%
+#   summarise(count = sum(total_count),.groups = "drop") %>%
+#   ggplot(aes(x = bin, y = count)) +
+#   geom_line() +
+#   labs(
+#     x = "Bin",
+#     y = "Sum Read Count"
+#   ) +
+#   facet_wrap(~ region, scales = "free_x")
 ```
 
-> Would it be a good idea to use density to represent the reads number in each bin of each transcript in a heatmap?
+> Would it be a good idea to use density to represent the reads number in each bin of each transcript in a heatmap? No.
 
 
+## Heatmap Distribution
 ```{r}
-coverage_heatmap = coverage_all %>%
-  mutate(transcript = factor(transcript, levels = rev(top100_h1299)))
-
-coverage_heatmap %>%
+h1299_cov_exp1 %>%
+  mutate(transcript = factor(transcript, levels = rev(top100_h1299)))%>%
   ggplot(aes(x = bin, y = transcript, fill = log10(total_count+1)))+
   geom_tile() +
   labs(
@@ -339,35 +464,31 @@ coverage_heatmap %>%
 ```
 
 
-
 ```{r}
-coverage_wide = coverage_all %>%
+# Heatmap clustering on trancripts
+
+h1299_cov_exp1_wide = h1299_cov_exp1 %>%
   group_by(transcript) %>%
   arrange(region)  %>%
   mutate(transcript = factor(transcript, levels = top100_h1299)) %>%
   arrange(transcript) %>%
-  pivot_wider(names_from = c(region, bin), values_from = total_count)
+  pivot_wider(names_from = c(region, bin), values_from = total_count) # into wider form of df
 
-dist_matrix = dist(coverage_wide[,-1])
-hc = hclust(dist_matrix, method = "ward.D2")
-order = coverage_wide$transcript[hc$order]
-```
 
-```{r}
-coverage_matrix_data = as.matrix(coverage_wide[,-1])  # rm transcript col
-rownames(coverage_matrix_data) = coverage_wide$transcript  
+h1299_cov_exp1_matrix_data = as.matrix(h1299_cov_exp1_wide[,-1])  # rm transcript col
+rownames(h1299_cov_exp1_matrix_data) = h1299_cov_exp1_wide$transcript  
 
 annotation_col = data.frame(
-  Region = ifelse(grepl("UTR5", colnames(coverage_matrix_data)), "UTR5",
-                  ifelse(grepl("CDS", colnames(coverage_matrix_data)), "CDS", "UTR3"))
+  Region = ifelse(grepl("UTR5", colnames(h1299_cov_exp1_matrix_data)), "UTR5",
+                  ifelse(grepl("CDS", colnames(h1299_cov_exp1_matrix_data)), "CDS", "UTR3"))
 )
-rownames(annotation_col) <- colnames(coverage_matrix_data)
+rownames(annotation_col) <- colnames(h1299_cov_exp1_matrix_data)
 ```
 
 
 ```{r}
 pheatmap(
-  log10(coverage_matrix_data + 1),
+  log10(h1299_cov_exp1_matrix_data + 1),
   cluster_rows = TRUE,  # cluster based on rows
   cluster_cols = F,  
   show_rownames = TRUE,  # show the transcripts' name
@@ -377,9 +498,5 @@ pheatmap(
   main = "Transcripts Read Count Heatmap"
 )
 
-```
-
-```{r}
-# test to see if changes will be posted on the github
 ```
 
