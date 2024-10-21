@@ -53,6 +53,8 @@ library(ggplot2)
 library(viridis)
 library(pheatmap)
 library(grid)
+library(ggplotify)
+library(cowplot)
 ```
 
 # Data sources
@@ -125,7 +127,7 @@ top100_h1299 = h1299.rc %>%
   summarise(total_count = sum(count)) %>%
   arrange(desc(total_count)) %>%
   head(100) %>%
-  pull(transcript) # This will return the top 100 transcripts wih the most reads amoung all region, including UTR5, CDS and UTR3
+  pull(transcript) # This will return the top 100 transcripts wih the most reads amoung all region, including UTR5, CDS and UTR3, across all 6 experiments.
 ```
 
 ```{r}
@@ -156,8 +158,8 @@ top100_region_coord = region_coord %>% # filter for the top 100 transcripts
 top100_region_coord
 ```
 
-
-```{r}
+## Check if the variable indicate the right bonds
+```{r,eval=FALSE}
 top100_region_coord %>% # manually calculate the original region bonds
   group_by(transcript) %>%
   summarise(UTR5 = UTR5_stop - UTR5_start+1,CDS = CDS_stop - CDS_start+1, UTR3 = UTR3_stop - UTR3_start+1) %>%
@@ -165,7 +167,7 @@ top100_region_coord %>% # manually calculate the original region bonds
 ```
 
 
-```{r}
+```{r,eval=FALSE}
 get_original_region_lengths(ribo.object = h1299.ribo, # check with integreted algorithm
                             alias = T) %>%
   separate(transcript, into = paste0("part", 1:5), sep = "\\|", fill = "right") %>%
@@ -173,6 +175,8 @@ get_original_region_lengths(ribo.object = h1299.ribo, # check with integreted al
   select(part5,UTR5,CDS,UTR3) %>%
   arrange(part5)
 ```
+
+It looks like the bonds is correct.
 
 # A function for top100 distribution in all 6 experiments
 
@@ -321,6 +325,7 @@ h1299_cov = cov_cal(ribo_name = h1299.ribo,
 ```
 
 ## To manually check whether the function works
+
 ```{r,eval=FALSE}
 cov_list = list()
 
@@ -420,7 +425,7 @@ all(coverage_all == h1299_cov[[6]])
 # The first experiment, as an example, 20210318-NSP1-H1299-A
 h1299_cov_exp1 = h1299_cov[[1]]
 
-h1299_cov[[1]] %>%
+h1299_cov_exp1 %>%
   group_by(transcript,region) %>%
   mutate(density = total_count / sum(total_count))  %>% # density will turn NA if total_count in certain region to be 0
   ungroup() %>%
@@ -448,8 +453,36 @@ h1299_cov[[1]] %>%
 
 > Would it be a good idea to use density to represent the reads number in each bin of each transcript in a heatmap? No.
 
+```{r,fig.width= 10,fig.height= 15}
+# combined version for all six experiments
+combined_cov = bind_rows(
+  lapply(1:length(h1299_cov), function(i) {
+    h1299_cov[[i]] %>%
+      mutate(experiment = has.coverage[i])
+  })
+)
+
+combined_cov %>%
+  group_by(transcript, region, experiment) %>%
+  mutate(density = total_count / sum(total_count)) %>%
+  ungroup() %>%
+  group_by(region, bin, experiment) %>%
+  summarise(count = sum(density, na.rm = TRUE), .groups = "drop") %>%
+  ggplot(aes(x = bin, y = count)) +
+  geom_line() +
+  labs(
+    x = "Bin",
+    y = "Sum Read Count Density"
+  ) +
+  facet_wrap(~ experiment + region, scales = "free_x", nrow = 6, ncol = 3) # each row an experiment
+
+```
+
+
+
 
 ## Heatmap Distribution
+
 ```{r}
 h1299_cov_exp1 %>%
   mutate(transcript = factor(transcript, levels = rev(top100_h1299)))%>%
@@ -466,37 +499,107 @@ h1299_cov_exp1 %>%
 
 ```{r}
 # Heatmap clustering on trancripts
+# write a function
 
-h1299_cov_exp1_wide = h1299_cov_exp1 %>%
-  group_by(transcript) %>%
-  arrange(region)  %>%
-  mutate(transcript = factor(transcript, levels = top100_h1299)) %>%
-  arrange(transcript) %>%
-  pivot_wider(names_from = c(region, bin), values_from = total_count) # into wider form of df
-
-
-h1299_cov_exp1_matrix_data = as.matrix(h1299_cov_exp1_wide[,-1])  # rm transcript col
-rownames(h1299_cov_exp1_matrix_data) = h1299_cov_exp1_wide$transcript  
-
-annotation_col = data.frame(
-  Region = ifelse(grepl("UTR5", colnames(h1299_cov_exp1_matrix_data)), "UTR5",
-                  ifelse(grepl("CDS", colnames(h1299_cov_exp1_matrix_data)), "CDS", "UTR3"))
-)
-rownames(annotation_col) <- colnames(h1299_cov_exp1_matrix_data)
+heatmap_cluster = function(exp_data, exp_name, sorted_transcripts_names) {
+  exp_data_wide = exp_data %>%
+    group_by(transcript) %>%
+    arrange(region) %>%
+    mutate(transcript = factor(transcript, levels = sorted_transcripts_names)) %>%
+    arrange(transcript) %>%
+    pivot_wider(names_from = c(region, bin), values_from = total_count) # into wider form of df
+  
+  exp_data_matrix = as.matrix(exp_data_wide[,-1])
+  rownames(exp_data_matrix) <- exp_data_wide$transcript # rm transcript col
+  
+  annotation_col = data.frame(
+    Region = ifelse(grepl("UTR5", colnames(exp_data_matrix)), "UTR5",
+                    ifelse(grepl("CDS", colnames(exp_data_matrix)), "CDS", "UTR3")) # annotate the region for the final pheatmap
+  )
+  rownames(annotation_col) <- colnames(exp_data_matrix)
+  
+  # generate heatmap
+  heatmap_plot = pheatmap(
+    log10(exp_data_matrix + 1),
+    cluster_rows = TRUE,
+    cluster_cols = F, # cluster based on rows
+    show_rownames = TRUE,
+    show_colnames = F, # show the transcripts' name
+    color = viridis::viridis(50),
+    annotation_col = annotation_col,
+    main = paste(exp_name, ": Transcripts Read Count Heatmap"),
+    silent = TRUE # return no plot 
+  )
+  
+  heatmap_plot = as.ggplot(heatmap_plot)
+  
+  return(heatmap_plot)
+}
 ```
 
 
 ```{r}
-pheatmap(
-  log10(h1299_cov_exp1_matrix_data + 1),
-  cluster_rows = TRUE,  # cluster based on rows
-  cluster_cols = F,  
-  show_rownames = TRUE,  # show the transcripts' name
-  show_colnames = F,  
-  color = viridis(50),  
-  annotation_col = annotation_col,
-  main = "Transcripts Read Count Heatmap"
-)
+h1299_exp1_heatmap = heatmap_cluster(h1299_cov_exp1,has.coverage[1],top100_h1299)
 
+h1299_exp1_heatmap
 ```
+
+
+```{r,fig.height=20}
+heatmap_list = lapply(1:6, function(i) heatmap_cluster(h1299_cov[[i]], has.coverage[i],top100_h1299))
+plot_grid(plotlist = heatmap_list, ncol = 3, align = 'v')
+```
+
+
+# Troubleshooting typical anomalies
+
+We can easily observe that MTRNR2L transcripts and WDR74 lack of reading in all 6 experiments. The reason is :
+
+
+We should exclude these transcripts and go through the whole process again.
+
+```{r}
+# Re-select the transcripts
+
+excluded_transcripts = h1299.rc %>%
+  group_by(transcript) %>%
+  summarise(total_count = sum(count)) %>%
+  arrange(desc(total_count)) %>%
+  head(104) %>%
+  filter(str_detect(transcript,c("MTRNR")) | str_detect(transcript,"WDR")) %>%
+  pull(transcript)
+
+top100_h1299_mod = h1299.rc %>%
+  group_by(transcript) %>%
+  summarise(total_count = sum(count)) %>%
+  arrange(desc(total_count)) %>%
+  head(104) %>%
+  pull(transcript) # pull the top 104
+
+top100_h1299_mod = setdiff(top100_h1299_modified,excluded_transcripts) # filter out the excluded outliers
+
+top100_region_coord_mod = region_coord %>%
+  filter(transcript %in% top100_h1299_mod)
+```
+
+
+```{r}
+h1299_cov_mod = cov_cal(ribo_name = h1299.ribo,
+            transcripts_names = top100_h1299_mod,
+            transcripts_coordinates_df = top100_region_coord_mod,
+            exp.names = has.coverage,
+            n_bins_utr5 = 30,
+            n_bins_cds = 100,
+            n_bins_utr3 = 30)
+```
+
+```{r,fig.height=20}
+# Regenerate the Heatmap with the new objects
+mod_heatmap_list = lapply(1:6, function(i) heatmap_cluster(h1299_cov_mod[[i]], has.coverage[i],top100_h1299_mod))
+plot_grid(plotlist = mod_heatmap_list, ncol = 3, align = 'v')
+```
+
+# Are the transcripts distributed similarly across all the experiments.
+
+
 
