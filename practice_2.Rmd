@@ -55,6 +55,8 @@ library(pheatmap)
 library(grid)
 library(ggplotify)
 library(cowplot)
+library(broom)
+library(purrr)
 ```
 
 # Data sources
@@ -426,18 +428,19 @@ all(coverage_all == h1299_cov[[6]])
 h1299_cov_exp1 = h1299_cov[[1]]
 
 h1299_cov_exp1 %>%
-  group_by(transcript,region) %>%
+  group_by(transcript) %>%
   mutate(density = total_count / sum(total_count))  %>% # density will turn NA if total_count in certain region to be 0
   ungroup() %>%
   group_by(region,bin) %>%
   summarise(count = sum(density,na.rm = T),.groups = "drop") %>%
   ggplot(aes(x = bin, y = count)) +
+  geom_point() + 
   geom_line() +
   labs(
     x = "Bin",
     y = "Sum Read Count Density"
   ) +
-  facet_wrap(~ region, scales = "free_x")
+  facet_grid(~ region, scales = "free_x", space = "free")
 
 # coverage_all %>%
 #   group_by(region,bin) %>%
@@ -463,7 +466,7 @@ combined_cov = bind_rows(
 )
 
 combined_cov %>%
-  group_by(transcript, region, experiment) %>%
+  group_by(transcript, experiment) %>%
   mutate(density = total_count / sum(total_count)) %>%
   ungroup() %>%
   group_by(region, bin, experiment) %>%
@@ -474,7 +477,7 @@ combined_cov %>%
     x = "Bin",
     y = "Sum Read Count Density"
   ) +
-  facet_wrap(~ experiment + region, scales = "free_x", nrow = 6, ncol = 3) # each row an experiment
+  facet_grid(experiment ~ region, scales = "free_x", space = "free") # each row an experiment
 
 ```
 
@@ -576,7 +579,7 @@ top100_h1299_mod = h1299.rc %>%
   head(104) %>%
   pull(transcript) # pull the top 104
 
-top100_h1299_mod = setdiff(top100_h1299_modified,excluded_transcripts) # filter out the excluded outliers
+top100_h1299_mod = setdiff(top100_h1299_mod,excluded_transcripts) # filter out the excluded outliers
 
 top100_region_coord_mod = region_coord %>%
   filter(transcript %in% top100_h1299_mod)
@@ -593,7 +596,7 @@ h1299_cov_mod = cov_cal(ribo_name = h1299.ribo,
             n_bins_utr3 = 30)
 ```
 
-```{r,fig.height=20}
+```{r,fig.height=30}
 # Regenerate the Heatmap with the new objects
 mod_heatmap_list = lapply(1:6, function(i) heatmap_cluster(h1299_cov_mod[[i]], has.coverage[i],top100_h1299_mod))
 plot_grid(plotlist = mod_heatmap_list, ncol = 3, align = 'v')
@@ -601,5 +604,80 @@ plot_grid(plotlist = mod_heatmap_list, ncol = 3, align = 'v')
 
 # Are the transcripts distributed similarly across all the experiments.
 
+How we define whether the reads distribution of the transcripts remain similar or varies? We can first combine the df
+
+```{r}
+combined_cov_h1299_mod = bind_rows(
+  lapply(1:length(h1299_cov_mod), function(i) {
+    h1299_cov_mod[[i]] %>%
+      mutate(experiment = has.coverage[i])
+  })
+)
+```
+
+
+We can observe that the transcripts with the highest number of readings in the CDS area are, for example
+
+EEF1A1-202,HSP90AA1-201,GAPDH-201,VIM-209,HSP90AB1-202,HSPA8-224
+
+Among them, EEF1A1-202 have the most reads, and always have a separate branch across all 6 transcripts (6/6), and remain the brightest color; HSP90AA1-201 are always clustered together with VIM-209 (3/6) or GAPDH-201 (2/6) -- at least they are always arranged close to each other (5/6); HSP90AB1-202 and HSPA8-224 are always clustered together (6/6).
+
+We then check the ones that has significant deletion in CDS: NPM1-201 and PPIA-204; and the one have part of deletion in CDS: ACTB-201, ACTG1-210, PABPC1-201
+
+In all exps, NPM1-201 and PPIA-204 are clustered together, and their deletion in reads distribution remain consistent; ACTB-201 and ACTG1-210 are usually (4/6) clustered together, as they both have no reads around bin 75. PABPC1-201 have the "deletion" in a some how different area in CDS region, but still consistent across 6 exps.
+
+There are some interesting ones: 
+
+HSPA5-201 and ACTG1-201 have some accumulation of reads in the 5' end; 
+
+ACTB-201 and ACTG1-201 have this accumulation around start -- which is true, but their accumulation seems higher in UTR5 region, rather than CDS region, by raw counts
+
+HMGB1-203 have an accumulation in the 3' end, in the very last bin.
+
+Here's the heatmap that can show the designated distribution of a single transcript across 6 experiments
+
+```{r,fig.width=15,fig.height= 5}
+combined_cov_h1299_mod %>%
+  mutate(transcript = factor(transcript, levels = rev(top100_h1299))) %>%
+  filter(str_detect(transcript,"NPM1|PPIA|PABPC1|HMGB1|ACTB")) %>%
+  ggplot(aes(x = bin, y = experiment, fill = log10(total_count+1)))+
+  geom_tile() +
+  labs(
+    x = "Bin",
+    y = "Experiment",
+    fill = "Read Count")+
+  scale_fill_viridis_c()  + 
+  facet_grid(transcript ~ region, scales = "free_x", space = "free") # so result can be separated by transcripts, by rows.
+```
+
+This is intuitive, but also subjective. How we can do this in an objective way
+
+
+```{r}
+combined_cov_h1299_mod %>%
+  spread(key = experiment, value = total_count) %>%
+  group_by(transcript, region) %>%
+  summarise(
+    correlation_value = {
+      # manually choose the numeric cols
+      experiment_data = select(cur_data(), starts_with("2021"))
+      
+      # correlate
+      correlation_matrix = cor(as.matrix(experiment_data), use = "pairwise.complete.obs", method = "spearman") # We use Spearman correlation here. 
+      
+      # `use` is how we treat the NAs. Here will compute all possible non-NA pairs.
+      
+      # As we want to focus on whether the trend of the transcript varies across all experiments, and would not like to be affected by the difference in scale, we use Spearman.
+      
+      # Take the upper part of the correlation matrix and calculate the mean.
+      mean(correlation_matrix[upper.tri(correlation_matrix)], na.rm = TRUE) # Generate one correlation value for each region. 3 for a transcript.
+    }
+  ) %>%
+  ungroup() %>%
+  arrange(correlation_value) %>% # We see a lot of UTR region having high variability. We want to focus on the CDS region.
+  filter(region == "CDS")
+```
+
+As for the CDS region, evne the most variable one got > 0.8 in correlation_value, which means they are quite consistent across all 6 experiments.
 
 
