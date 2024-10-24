@@ -157,7 +157,8 @@ top100_region_coord = region_coord %>% # filter for the top 100 transcripts
 # top100_cds_region_coord = region_coord %>%
 #     filter(transcript %in% top100_h1299_cds) 
 
-top100_region_coord
+top100_region_coord %>%
+  filter(str_detect(transcript,"ACT"))
 ```
 
 ## Check if the variable indicate the right bonds
@@ -179,6 +180,20 @@ get_original_region_lengths(ribo.object = h1299.ribo, # check with integreted al
 ```
 
 It looks like the bonds is correct.
+
+```{r}
+get_coverage(ribo.object = h1299.ribo,
+                            name        = "PPIA-204",
+                            range.lower = 28,
+                            range.upper = 32,
+                            length      = T,
+                            alias       = TRUE,
+                            tidy        = TRUE,
+                            compact     = F,
+                            experiment  = has.coverage[1]) 
+```
+
+
 
 # A function for top100 distribution in all 6 experiments
 
@@ -454,7 +469,20 @@ h1299_cov_exp1 %>%
 #   facet_wrap(~ region, scales = "free_x")
 ```
 
-> Would it be a good idea to use density to represent the reads number in each bin of each transcript in a heatmap? No.
+```{r}
+plot_metagene(h1299.ribo,
+              site        = "start",
+              experiment  = has.coverage[1],
+              range.lower = 28,
+              range.upper = 32)
+```
+
+
+> We can see the CDS has a significant higher distribution in reads, which is align with our expectation.
+>
+> But also, we can find something interesting around the start point. We should expect accumulation here, but should be more accumulated in the right hand of start point -- that is, in the CDS region. However, we can see now there's a peak near the start point in UTR5 region, which is way higher than the one in CDS.
+>
+
 
 ```{r,fig.width= 10,fig.height= 15}
 # combined version for all six experiments
@@ -485,6 +513,8 @@ combined_cov %>%
 
 
 ## Heatmap Distribution
+
+> Would it be a good idea to use density to represent the reads number in each bin of each transcript in a heatmap? No.
 
 ```{r}
 h1299_cov_exp1 %>%
@@ -556,7 +586,7 @@ plot_grid(plotlist = heatmap_list, ncol = 3, align = 'v')
 
 # Troubleshooting typical anomalies
 
-We can easily observe that MTRNR2L transcripts and WDR74 lack of reading in all 6 experiments. The reason is :
+We can easily observe that MTRNR2L transcripts and WDR74 lack of reading in all 6 experiments. The reason is that MTRNR2L are just psuedo genes here.
 
 
 We should exclude these transcripts and go through the whole process again.
@@ -602,7 +632,7 @@ mod_heatmap_list = lapply(1:6, function(i) heatmap_cluster(h1299_cov_mod[[i]], h
 plot_grid(plotlist = mod_heatmap_list, ncol = 3, align = 'v')
 ```
 
-# Are the transcripts distributed similarly across all the experiments.
+# Interesting transcripts (Are the transcripts distributed similarly across all the experiments.)
 
 How we define whether the reads distribution of the transcripts remain similar or varies? We can first combine the df
 
@@ -622,7 +652,7 @@ EEF1A1-202,HSP90AA1-201,GAPDH-201,VIM-209,HSP90AB1-202,HSPA8-224
 
 Among them, EEF1A1-202 have the most reads, and always have a separate branch across all 6 transcripts (6/6), and remain the brightest color; HSP90AA1-201 are always clustered together with VIM-209 (3/6) or GAPDH-201 (2/6) -- at least they are always arranged close to each other (5/6); HSP90AB1-202 and HSPA8-224 are always clustered together (6/6).
 
-We then check the ones that has significant deletion in CDS: NPM1-201 and PPIA-204; and the one have part of deletion in CDS: ACTB-201, ACTG1-210, PABPC1-201
+We then check the ones that has significant deletion in CDS: *NPM1-201* and *PPIA-204*; and the one have part of deletion in CDS: ACTB-201, ACTG1-210, PABPC1-201
 
 In all exps, NPM1-201 and PPIA-204 are clustered together, and their deletion in reads distribution remain consistent; ACTB-201 and ACTG1-210 are usually (4/6) clustered together, as they both have no reads around bin 75. PABPC1-201 have the "deletion" in a some how different area in CDS region, but still consistent across 6 exps.
 
@@ -632,14 +662,14 @@ HSPA5-201 and ACTG1-201 have some accumulation of reads in the 5' end;
 
 ACTB-201 and ACTG1-201 have this accumulation around start -- which is true, but their accumulation seems higher in UTR5 region, rather than CDS region, by raw counts
 
-HMGB1-203 have an accumulation in the 3' end, in the very last bin.
+*HMGB1-203* have an accumulation in the 3' end, in the very last bin.
 
 Here's the heatmap that can show the designated distribution of a single transcript across 6 experiments
 
 ```{r,fig.width=15,fig.height= 5}
 combined_cov_h1299_mod %>%
   mutate(transcript = factor(transcript, levels = rev(top100_h1299))) %>%
-  filter(str_detect(transcript,"NPM1|PPIA|PABPC1|HMGB1|ACTB")) %>%
+  filter(str_detect(transcript,"NPM1|PPIA|HSPA5|ACTB|ACTG1|HMGB1")) %>%
   ggplot(aes(x = bin, y = experiment, fill = log10(total_count+1)))+
   geom_tile() +
   labs(
@@ -678,6 +708,32 @@ combined_cov_h1299_mod %>%
   filter(region == "CDS")
 ```
 
-As for the CDS region, evne the most variable one got > 0.8 in correlation_value, which means they are quite consistent across all 6 experiments.
+As for the CDS region, even the most variable one got > 0.8 in correlation_value, which means they are quite consistent across all 6 experiments.
 
 
+We Also want to check the uniformity for each transcript.
+
+Coefficient of variance, Shannon entropy and uniformity index (not used since it require the reads amount to be normalized before calculation) can be used to quantify the uniformity.
+
+```{r}
+combined_cov_h1299_mod %>%
+  filter(region == "CDS") %>%
+  group_by(transcript,experiment) %>%
+  mutate(proportion = total_count/sum(total_count)) %>% # for calculating the Shannon Entropy
+  # summarise(mean = mean(total_count),var = var(total_count),.groups = "drop") %>%
+  # ggplot(aes(x = mean, y = var, color = transcript)) +
+  # geom_point() +
+  # theme(legend.position = "none") # for checking relationship between var and mean
+  summarise(Shannon = -sum(proportion * log2(proportion), na.rm = TRUE),CoV = sd(total_count)/mean(total_count),.groups = "drop") %>%
+  ungroup() %>%
+  arrange(desc(CoV))
+```
+
+Larger the CoV, greater the degree of dispersion; larger the Shannon Entropy, the more uniform it is distributed
+
+For CoV: RPL38,PPIA-204,HNRNPU-205
+
+For Shannon-entropy: RPL38,PPIA-204,NPM1-201,RPLXXX,HRNRPU. We mentioned earlier that PPIA and NPM1 are CDS regions with a large number of "deletion" regions
+
+
+We can see that both indices reflect some common, less uniformly distributed transcripts.
