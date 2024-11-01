@@ -44,6 +44,18 @@ The second rotation is centered around the downstream data analysis of ribo-seq.
     
     For NPMI-201 and PPIA-204, why they are partially not expressed in the CDS region?
 
+6. Do simple test case. Check again whether the reads are assigned to correct bins.
+
+    Change the calculation of density based on from the total count in the certain region to the whole across the transcipt.
+    
+    See if there is a consistent trend in the distribution of single transcripts across the six experiments? What are the subjective judgments? How can this process be quantified?
+    
+    Change correlation method from Pearson to Spearman. Explain why.
+    
+    Check the uniformity of each transcripts. Why?
+    
+    Find the interesting genes. Explain why the distribution looks like that.
+
 # Packages
 
 ```{r}
@@ -57,6 +69,7 @@ library(ggplotify)
 library(cowplot)
 library(broom)
 library(purrr)
+library(svglite)
 ```
 
 # Data sources
@@ -94,9 +107,13 @@ head(get_reference_names(h1299.ribo), 2)
 
 
 ```{r}
+# Save as SVG
+# svglite("region_count.svg", width = 11, height = 6)
 plot_region_counts(x           = h1299.ribo,
                    range.lower = 28,
                    range.upper = 32) # Read Counts for different experiments
+
+# dev.off()
 ```
 
 
@@ -180,19 +197,6 @@ get_original_region_lengths(ribo.object = h1299.ribo, # check with integreted al
 ```
 
 It looks like the bonds is correct.
-
-```{r}
-get_coverage(ribo.object = h1299.ribo,
-                            name        = "PPIA-204",
-                            range.lower = 28,
-                            range.upper = 32,
-                            length      = T,
-                            alias       = TRUE,
-                            tidy        = TRUE,
-                            compact     = F,
-                            experiment  = has.coverage[1]) 
-```
-
 
 
 # A function for top100 distribution in all 6 experiments
@@ -437,9 +441,18 @@ all(coverage_all == h1299_cov[[6]])
 
 # Visualize
 
+```{r}
+# Define the color-blind-friendly palette
+cbbPalette <- c("#000000", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+```
+
+
 ## Distribution, by density
 ```{r}
 # The first experiment, as an example, 20210318-NSP1-H1299-A
+# Save as SVG
+# svglite("distribution_1.svg", width = 11, height = 6)
+
 h1299_cov_exp1 = h1299_cov[[1]]
 
 h1299_cov_exp1 %>%
@@ -449,13 +462,26 @@ h1299_cov_exp1 %>%
   group_by(region,bin) %>%
   summarise(count = sum(density,na.rm = T),.groups = "drop") %>%
   ggplot(aes(x = bin, y = count)) +
-  geom_point() + 
-  geom_line() +
+  geom_point(color = "#0072B2") + # color-blind friendly
+  geom_line(color = "#0072B2") +
   labs(
+    title = "Overall Read Count Density Across Regions",
     x = "Bin",
     y = "Sum Read Count Density"
   ) +
+  theme_classic() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold",hjust = 0.5),       # Main title
+    axis.title.x = element_text(size = 14, face = "bold"),     # X-axis title
+    axis.title.y = element_text(size = 14, face = "bold"),     # Y-axis title
+    axis.text = element_text(size = 12),                       # Axis labels
+    strip.text = element_text(size = 14, face = "bold"),        # Facet label
+    panel.grid.major = element_line(color = "grey90", size = 0.25),   # Major grid lines
+  ) +
   facet_grid(~ region, scales = "free_x", space = "free")
+
+# Close the SVG device
+# dev.off()
 
 # coverage_all %>%
 #   group_by(region,bin) %>%
@@ -470,12 +496,25 @@ h1299_cov_exp1 %>%
 ```
 
 ```{r}
+# svglite("metagene_start.svg", width = 12, height = 6)
 plot_metagene(h1299.ribo,
               site        = "start",
-              experiment  = has.coverage[1],
+              experiment  = has.coverage,
               range.lower = 28,
               range.upper = 32)
+# dev.off()
 ```
+
+```{r}
+# svglite("metagene_stop.svg", width = 12, height = 6)
+plot_metagene(h1299.ribo,
+              site        = "stop",
+              experiment  = has.coverage,
+              range.lower = 28,
+              range.upper = 32)
+# dev.off()
+```
+
 
 
 > We can see the CDS has a significant higher distribution in reads, which is align with our expectation.
@@ -484,7 +523,7 @@ plot_metagene(h1299.ribo,
 >
 
 
-```{r,fig.width= 10,fig.height= 15}
+```{r}
 # combined version for all six experiments
 combined_cov = bind_rows(
   lapply(1:length(h1299_cov), function(i) {
@@ -492,21 +531,39 @@ combined_cov = bind_rows(
       mutate(experiment = has.coverage[i])
   })
 )
+```
+
+
+```{r}
+# svglite("distribution_all.svg", width = 12, height = 6)
 
 combined_cov %>%
+  mutate(experiment = str_replace(experiment, "20210318-(NSP[12])-H1299-([A-C])", "\\1-\\2")) %>%
   group_by(transcript, experiment) %>%
   mutate(density = total_count / sum(total_count)) %>%
   ungroup() %>%
   group_by(region, bin, experiment) %>%
   summarise(count = sum(density, na.rm = TRUE), .groups = "drop") %>%
-  ggplot(aes(x = bin, y = count)) +
-  geom_line() +
+  ggplot(aes(x = bin, y = count, colour = experiment)) +
+  geom_line(linewidth = 0.5) +
   labs(
+    title = "Read Count Density Across Regions and experiments in H1299 Cells",
     x = "Bin",
     y = "Sum Read Count Density"
   ) +
-  facet_grid(experiment ~ region, scales = "free_x", space = "free") # each row an experiment
+  theme_classic() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold",hjust = 0.5),       # Main title
+    axis.title.x = element_text(size = 14, face = "bold"),     # X-axis title
+    axis.title.y = element_text(size = 14, face = "bold"),     # Y-axis title
+    axis.text = element_text(size = 12),                       # Axis labels
+    strip.text = element_text(size = 14, face = "bold"),        # Facet label
+    panel.grid.major = element_line(color = "grey90", size = 0.25),   # Major grid lines
 
+  ) +
+  facet_grid(~ region, scales = "free_x", space = "free") # each row an experiment
+
+# dev.off()
 ```
 
 
@@ -517,6 +574,8 @@ combined_cov %>%
 > Would it be a good idea to use density to represent the reads number in each bin of each transcript in a heatmap? No.
 
 ```{r}
+# svglite("heatmap_1.svg", width = 16, height = 16)
+
 h1299_cov_exp1 %>%
   mutate(transcript = factor(transcript, levels = rev(top100_h1299)))%>%
   ggplot(aes(x = bin, y = transcript, fill = log10(total_count+1)))+
@@ -525,8 +584,43 @@ h1299_cov_exp1 %>%
     x = "Bin",
     y = "Transcript",
     fill = "Read Count")+
+  theme_test() + 
+  theme(
+    plot.title = element_text(size = 18, face = "bold",hjust = 0.5), # Main title
+    axis.title.x = element_text(size = 14, face = "bold"), # X-axis title
+    axis.title.y = element_text(size = 14, face = "bold"), # Y-axis title
+    axis.text = element_text(size = 12), # Axis labels
+    strip.text = element_text(size = 14, face = "bold"), # Facet label
+    legend.text = element_text(size = 12), # legend text
+    legend.title = element_text(size = 14) # legend title
+  ) +
+  guides(
+    fill = guide_colourbar(barheight = 10, barwidth = 1)  # 拉长彩条，调整高度和宽度
+  ) +
   scale_fill_viridis_c()  + 
   facet_grid(~ region, scales = "free_x", space = "free")
+
+# dev.off()
+```
+
+```{r}
+# svglite("heatmap_1_4.svg", width = 12, height = 3)
+
+h1299_cov_exp1 %>%
+  mutate(transcript = factor(transcript, levels = rev(top100_h1299)))%>%
+  filter(str_detect(transcript,"MTRNR|WDR")) %>%
+  ggplot(aes(x = bin, y = transcript, fill = log10(total_count+1)))+
+  geom_tile() +
+  labs(
+    x = "Bin",
+    y = "Transcript",
+    fill = "Read Count")+
+  theme_test() +
+  
+  scale_fill_viridis_c()  + 
+  facet_grid(~ region, scales = "free_x", space = "free")
+
+# dev.off()
 ```
 
 
@@ -573,18 +667,29 @@ heatmap_cluster = function(exp_data, exp_name, sorted_transcripts_names) {
 
 ```{r}
 h1299_exp1_heatmap = heatmap_cluster(h1299_cov_exp1,has.coverage[1],top100_h1299)
+```
 
+
+```{r}
+# svglite("heatmap_1.1.svg", width = 12, height = 16)
 h1299_exp1_heatmap
+# dev.off()
+```
+
+
+```{r}
+heatmap_list = lapply(1:6, function(i) heatmap_cluster(h1299_cov[[i]], has.coverage[i],top100_h1299))
 ```
 
 
 ```{r,fig.height=20}
-heatmap_list = lapply(1:6, function(i) heatmap_cluster(h1299_cov[[i]], has.coverage[i],top100_h1299))
+# svglite("heatmap_1.6.svg", width = 30, height = 25)
 plot_grid(plotlist = heatmap_list, ncol = 3, align = 'v')
+# dev.off()
 ```
 
 
-# Troubleshooting typical anomalies
+## Troubleshooting typical anomalies
 
 We can easily observe that MTRNR2L transcripts and WDR74 lack of reading in all 6 experiments. The reason is that MTRNR2L are just psuedo genes here.
 
@@ -626,13 +731,20 @@ h1299_cov_mod = cov_cal(ribo_name = h1299.ribo,
             n_bins_utr3 = 30)
 ```
 
-```{r,fig.height=30}
+```{r}
 # Regenerate the Heatmap with the new objects
 mod_heatmap_list = lapply(1:6, function(i) heatmap_cluster(h1299_cov_mod[[i]], has.coverage[i],top100_h1299_mod))
-plot_grid(plotlist = mod_heatmap_list, ncol = 3, align = 'v')
 ```
 
-# Interesting transcripts (Are the transcripts distributed similarly across all the experiments.)
+
+```{r,fig.height=30}
+# svglite("heatmap_2.6.svg", width = 30, height = 25)
+plot_grid(plotlist = mod_heatmap_list, ncol = 3, align = 'v')
+# dev.off()
+```
+
+
+## Interesting transcripts (Are the transcripts distributed similarly across all the experiments.)
 
 How we define whether the reads distribution of the transcripts remain similar or varies? We can first combine the df
 
@@ -666,24 +778,41 @@ ACTB-201 and ACTG1-201 have this accumulation around start -- which is true, but
 
 Here's the heatmap that can show the designated distribution of a single transcript across 6 experiments
 
-```{r,fig.width=15,fig.height= 5}
+```{r}
+# svglite("interesting_transcripts.svg", width = 12, height = 10)
 combined_cov_h1299_mod %>%
-  mutate(transcript = factor(transcript, levels = rev(top100_h1299))) %>%
+  mutate(transcript = factor(transcript, levels = rev(top100_h1299)))  %>%
+  mutate(experiment = str_replace(experiment, "20210318-(NSP[12])-H1299-([A-C])", "\\1-\\2")) %>%
   filter(str_detect(transcript,"NPM1|PPIA|HSPA5|ACTB|ACTG1|HMGB1")) %>%
   ggplot(aes(x = bin, y = experiment, fill = log10(total_count+1)))+
   geom_tile() +
   labs(
     x = "Bin",
     y = "Experiment",
-    fill = "Read Count")+
-  scale_fill_viridis_c()  + 
+    fill = "Read Count") +
+  scale_fill_viridis_c() + 
+  theme_classic() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold",hjust = 0.5), # Main title
+    axis.title.x = element_text(size = 14, face = "bold"), # X-axis title
+    axis.title.y = element_text(size = 14, face = "bold"), # Y-axis title
+    axis.text = element_text(size = 12), # Axis labels
+    strip.text = element_text(size = 14, face = "bold"), # Facet label
+    legend.text = element_text(size = 12), # legend text
+    legend.title = element_text(size = 14), # legend title
+    strip.text.y = element_text(size = 14, face = "bold", angle = 0, hjust = 0), # Rotate transcript labels
+
+  ) +
   facet_grid(transcript ~ region, scales = "free_x", space = "free") # so result can be separated by transcripts, by rows.
+# dev.off()
 ```
 
 This is intuitive, but also subjective. How we can do this in an objective way
 
 
 ```{r}
+# svglite("correlation1.svg", width = 8, height = 5)
+
 combined_cov_h1299_mod %>%
   spread(key = experiment, value = total_count) %>%
   group_by(transcript, region) %>%
@@ -705,7 +834,26 @@ combined_cov_h1299_mod %>%
   ) %>%
   ungroup() %>%
   arrange(correlation_value) %>% # We see a lot of UTR region having high variability. We want to focus on the CDS region.
-  filter(region == "CDS")
+  filter(region == "CDS")%>% 
+  ggplot(aes(x = correlation_value)) +
+  geom_histogram(color = "white", bins = 15) +
+  geom_vline(xintercept = 0.8, color = "tomato1", size = 1.2) +
+  labs(
+    title = "Distribution of Correlation for top transcripts",
+    x = "Correlation Value",
+    y = "Count"
+  ) +
+  theme_classic() +
+  theme(
+    text = element_text(size = 14),
+    axis.text = element_text(color = "black"),
+     plot.title = element_text(size = 18, face = "bold",hjust = 0.5),       # Main title
+    axis.title.x = element_text(size = 14, face = "bold"),     # X-axis title
+    axis.title.y = element_text(size = 14, face = "bold"),     # Y-axis title
+    strip.text = element_text(size = 14, face = "bold"),        # Facet label
+    panel.grid.major = element_line(color = "grey90", size = 0.25),   # Major grid lines
+  )
+# dev.off()
 ```
 
 As for the CDS region, even the most variable one got > 0.8 in correlation_value, which means they are quite consistent across all 6 experiments.
@@ -716,7 +864,7 @@ We Also want to check the uniformity for each transcript.
 Coefficient of variance, Shannon entropy and uniformity index (not used since it require the reads amount to be normalized before calculation) can be used to quantify the uniformity.
 
 ```{r}
-combined_cov_h1299_mod %>%
+uniformity = combined_cov_h1299_mod %>%
   filter(region == "CDS") %>%
   group_by(transcript,experiment) %>%
   mutate(proportion = total_count/sum(total_count)) %>% # for calculating the Shannon Entropy
@@ -725,15 +873,324 @@ combined_cov_h1299_mod %>%
   # geom_point() +
   # theme(legend.position = "none") # for checking relationship between var and mean
   summarise(Shannon = -sum(proportion * log2(proportion), na.rm = TRUE),CoV = sd(total_count)/mean(total_count),.groups = "drop") %>%
-  ungroup() %>%
-  arrange(desc(CoV))
+  ungroup() 
 ```
 
-Larger the CoV, greater the degree of dispersion; larger the Shannon Entropy, the more uniform it is distributed
+We want to check the most uneven transcripts. How to do it in a relatively objective way?
 
-For CoV: RPL38,PPIA-204,HNRNPU-205
+By setting an objective cutoff, we need to check the overall distribution of both uniformity indices.
 
-For Shannon-entropy: RPL38,PPIA-204,NPM1-201,RPLXXX,HRNRPU. We mentioned earlier that PPIA and NPM1 are CDS regions with a large number of "deletion" regions
+```{r}
+cov_threshold <- quantile(uniformity$CoV, 0.95)   # CoV top 5%
+shannon_threshold <- quantile(uniformity$Shannon, 0.05)  # Shannon bottom 5%
+```
 
 
-We can see that both indices reflect some common, less uniformly distributed transcripts.
+```{r}
+# CoV Density Plot
+# svglite("cov_density.svg", width = 8, height = 5)
+
+ggplot(uniformity, aes(x = CoV)) +
+  geom_density(fill = "skyblue", alpha = 0.5) +
+  geom_vline(xintercept = cov_threshold, color = "red", linetype = "dashed", size = 0.6) + # Add cutoff line
+  labs(
+    title = "Distribution of Coefficient of Variation (CoV) for top transcripts",
+    x = "CoV",
+    y = "Density"
+  ) +
+  theme_classic() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold",hjust = 0.5),       # Main title
+    axis.title.x = element_text(size = 14, face = "bold"),     # X-axis title
+    axis.title.y = element_text(size = 14, face = "bold"),     # Y-axis title
+    axis.text = element_text(size = 12),                       # Axis labels
+    strip.text = element_text(size = 14, face = "bold"),        # Facet label
+    panel.grid.major = element_line(color = "grey90", size = 0.25),   # Major grid lines
+  ) 
+# dev.off()
+```
+
+```{r}
+# Shannon Density Plot
+# svglite("shannon_density.svg", width = 8, height = 5)
+
+ggplot(uniformity, aes(x = Shannon)) +
+  geom_density(fill = "lightgreen", alpha = 0.5) +
+  geom_vline(xintercept = shannon_threshold, color = "red", linetype = "dashed", size = 0.6) + # Add cutoff line
+  labs(
+    title = "Distribution of Shannon Entropy for top transcripts",
+    x = "Shannon",
+    y = "Density"
+  ) +
+  theme_classic() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold",hjust = 0.5),       # Main title
+    axis.title.x = element_text(size = 14, face = "bold"),     # X-axis title
+    axis.title.y = element_text(size = 14, face = "bold"),     # Y-axis title
+    axis.text = element_text(size = 12),                       # Axis labels
+    strip.text = element_text(size = 14, face = "bold"),        # Facet label
+    panel.grid.major = element_line(color = "grey90", size = 0.25),   # Major grid lines
+  ) 
+
+# dev.off()
+```
+
+We can see tails in both distribution. In order to figure out the most "variable" transcripts, we can use a 5% threshold here.
+
+```{r}
+highlight_points <- uniformity %>%
+  mutate(experiment = str_replace(experiment, "20210318-(NSP[12])-H1299-([A-C])", "\\1-\\2")) %>%
+  filter(CoV > cov_threshold | Shannon < shannon_threshold)
+```
+
+
+```{r}
+# svglite("uniformity.svg", width = 10, height = 7)
+
+uniformity %>%
+  mutate(experiment = str_replace(experiment, "20210318-(NSP[12])-H1299-([A-C])", "\\1-\\2")) %>%
+  ggplot( aes(x = CoV, y = Shannon)) +
+  geom_point(alpha = 0.5, color = "grey") +  # grey for all
+  geom_point(data = highlight_points, aes(color = transcript, shape = experiment), size = 3) +  # color for transcripts, shape for exps
+
+  labs(
+    title = "Scatter Plot of CoV vs Shannon with Highlighted Transcripts",
+    x = "Coefficient of Variation (CoV)",
+    y = "Shannon Entropy",
+    color = "Transcript",  
+    shape = "Experiment"  
+  ) +
+  theme_classic() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold",hjust = 0.5),       # Main title
+    axis.title.x = element_text(size = 14, face = "bold"),     # X-axis title
+    axis.title.y = element_text(size = 14, face = "bold"),     # Y-axis title
+    axis.text = element_text(size = 12),                       # Axis labels
+    strip.text = element_text(size = 14, face = "bold"),        # Facet label
+    panel.grid.major = element_line(color = "grey90", size = 0.25),   # Major grid lines
+  ) 
+
+# dev.off()
+```
+
+
+Larger the CoV, greater the degree of dispersion; smaller the Shannon Entropy, the less uniform it is distributed
+
+For CoV: RPL38,PPIA-204,HNRNPU-205(reader enzyme?)
+
+For Shannon-entropy: RPL38,PPIA-204,NPM1-201,RPLXXX,HRNPU. We mentioned earlier that PPIA and NPM1 are CDS regions with a large number of "deletion" regions
+
+We can see that both indices share some less uniformly distributed transcripts.
+
+One thing really interest me here is that, NPM1 seems to be more "uniform" than RPL38, although by only looking at the heatmap,intuitively speaking, I would not get such a result.
+
+```{r,fig.width=15,fig.height= 5}
+# svglite("uniformity_heatmap.svg", width = 12, height = 4)
+
+combined_cov_h1299_mod %>%
+  mutate(transcript = factor(transcript, levels = rev(top100_h1299))) %>%
+  mutate(experiment = str_replace(experiment, "20210318-(NSP[12])-H1299-([A-C])", "\\1-\\2")) %>%
+  filter(str_detect(transcript,"NPM1|RPL38|PPIA")) %>%
+  filter(region == "CDS") %>%
+  ggplot(aes(x = bin, y = experiment, fill = log10(total_count+1)))+
+  geom_tile() +
+  labs(
+    x = "Bin",
+    y = "Experiment",
+    fill = "Read Count")+
+  theme_classic() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold",hjust = 0.5), # Main title
+    axis.title.x = element_text(size = 14, face = "bold"), # X-axis title
+    axis.title.y = element_text(size = 14, face = "bold"), # Y-axis title
+    axis.text = element_text(size = 12), # Axis labels
+    strip.text = element_text(size = 14, face = "bold"), # Facet label
+    legend.text = element_text(size = 12), # legend text
+    legend.title = element_text(size = 14), # legend title
+    strip.text.y = element_text(size = 14, face = "bold", angle = 0, hjust = 0), # Rotate transcript labels
+
+  ) +
+  scale_fill_viridis_c()  + 
+  facet_grid(transcript ~ region, scales = "free_x", space = "free") # so result can be separated by transcripts, by rows.
+
+# dev.off()
+```
+
+```{r}
+combined_cov_h1299_mod %>%
+  filter(str_detect(transcript,"NPM1|RPL38")) %>%
+  filter(region == "CDS") %>%
+  group_by(transcript,experiment) %>%
+  summarise(var = var(total_count),MEAN = mean(total_count),.groups = "drop") %>%
+  ungroup()
+
+uniformity %>%
+  filter(str_detect(transcript,"NPM1|RPL38"))
+```
+
+Maybe bin assignment reduce the variance that raw counts brought?
+
+
+
+# Modified Distribution
+
+```{r}
+h1299_cov_mod[[1]] %>%
+  group_by(transcript) %>%
+  mutate(density = total_count / sum(total_count))  %>% # density will turn NA if total_count in certain region to be 0
+  ungroup() %>%
+  group_by(region,bin) %>%
+  summarise(count = sum(density,na.rm = T),.groups = "drop") %>%
+  ggplot(aes(x = bin, y = count)) +
+  geom_point() + 
+  geom_line() +
+  labs(
+    x = "Bin",
+    y = "Sum Read Count Density"
+  ) +
+  facet_grid(~ region, scales = "free_x", space = "free")
+```
+
+
+```{r}
+# svglite("distribution_all_mod.svg", width = 12, height = 6)
+
+combined_cov_h1299_mod %>%
+  mutate(experiment = str_replace(experiment, "20210318-(NSP[12])-H1299-([A-C])", "\\1-\\2")) %>%
+  group_by(transcript, experiment) %>%
+  mutate(density = total_count / sum(total_count)) %>%
+  ungroup() %>%
+  group_by(region, bin, experiment) %>%
+  summarise(count = sum(density, na.rm = TRUE), .groups = "drop") %>%
+  ggplot(aes(x = bin, y = count, colour = experiment)) +
+  geom_line(linewidth = 0.5) +
+  labs(
+    title = "Read Count Density Across Regions and experiments in H1299 Cells",
+    x = "Bin",
+    y = "Sum Read Count Density"
+  ) +
+  theme_classic() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold",hjust = 0.5),       # Main title
+    axis.title.x = element_text(size = 14, face = "bold"),     # X-axis title
+    axis.title.y = element_text(size = 14, face = "bold"),     # Y-axis title
+    axis.text = element_text(size = 12),                       # Axis labels
+    strip.text = element_text(size = 14, face = "bold"),        # Facet label
+    panel.grid.major = element_line(color = "grey90", size = 0.25),   # Major grid lines
+
+  ) +
+  facet_grid(~ region, scales = "free_x", space = "free") # each row an experiment
+
+# dev.off()
+```
+
+We see that the abnormal peak in UTR3 caused by pseudogenes have been removed.
+
+
+# Quick TE check
+
+What is translational efficiency?
+
+    TE is the
+
+
+    
+```{r}
+rna_h1299 = get_rnaseq(ribo.object = h1299.ribo,
+                     tidy        = TRUE,
+                     compact = FALSE,
+                     alias       = TRUE,
+                     experiment  = has.coverage) # By checking the info, I know all 6 have coverage info as well as rna info
+
+h1299.rc.all = get_region_counts(h1299.ribo,
+                                 tidy = TRUE,
+                        length      = T, # don't separate based on different length
+                        transcript  = F, # transcriptome level result
+                        alias = T,  # Name of the transcript
+                        compact = F)
+```
+
+
+```{r}
+a = rna_h1299 %>%
+  filter(transcript %in% top100_h1299_mod) %>%
+  filter(region == "CDS") %>%
+  filter(experiment == "20210318-NSP1-H1299-A") %>%
+  pull(count)
+
+b = h1299.rc %>%
+  filter(transcript %in% top100_h1299_mod) %>%
+  filter(region == "CDS") %>%
+  filter(experiment == "20210318-NSP1-H1299-A") %>%
+  pull(count)
+
+plot(log2(a), log2(b), xlab = "RNA-Seq", ylab = "Ribosome Profiling", main = "log2 CDS Read Counts", pch = 19, cex = 0.5)
+```
+
+```{r}
+te = b/a
+```
+
+# Check the exact coverage
+
+```{r}
+h1299_cov_mod[[1]] %>%
+  filter(str_detect(transcript,"PPIA|NPM1")) # 
+
+get_original_region_coordinates(h1299.ribo,
+                                alias = T) %>%
+  filter(str_detect(transcript,"PPIA-204|NPM1")) # CDS region length: NPM1 = 882, start 302; PPIA = 494, start 46
+```
+
+Both CDS region length = 1124 (1128 in fasta), ACTG1 start 428, ACTB start 193; 75,76 bin = 0
+ACTG1: 75: 1260-1271; 76: 1272-1282 (Actual relative blank position in CDS: 831-858)
+ACTB: 75: 1025-1036 76: 1037-1047
+
+NPM1:
+CDS length = 882 (885 in fasta), start 302
+1-3,24-26,35-37,64-74,83-84,95-100 bin = 0
+
+64-74:858-954(557-653); 95-100: 1132-1183(831-882)
+
+PPIA:
+CDS length = 495 (498 in fasta), start 46
+30-38,58-71 bin = 0
+
+30-38: 190-233(145-188); 58-71: 332-396(287-351)
+
+# PPT related
+
+```{r}
+# Load necessary library
+library(ggplot2)
+
+# Original data
+original_data <- c(5, 10, 8, 13, 4, 17, 35, 0, 22, 1, 15, 14, 9, 6)
+
+# Grouped sums (intermediate step)
+grouped_sums <- c(23, 69, 23, 44)
+
+# Proportions (final transformed data)
+transformed_data <- grouped_sums / sum(grouped_sums)
+
+# Create data frames for plotting
+original_df <- data.frame(Index = 1:length(original_data), Value = original_data, Category = "Original Data")
+transformed_df <- data.frame(Index = 1:length(transformed_data), Value = transformed_data, Category = "Transformed Data")
+
+# Combine data frames for plotting
+plot_data <- rbind(
+  original_df,
+  transformed_df
+)
+
+# Plot the distributions with line charts
+plot_data %>%
+  filter(Category == "Transformed Data") %>%
+  ggplot(aes(x = Index, y = Value)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  theme_classic()
+
+
+```
+
